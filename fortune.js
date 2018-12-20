@@ -1,27 +1,25 @@
 /**
- * @file Server running APIbunny app
- * @author Nicolas Grenié <nicolas@3scale.net>
+ * @file Server running Escape the Conference app
+ * @author Baptiste Jacquemet <baptiste.jacquemet@gmail.com>
+ * based on the code of Nicolas Grenié <nicolas@3scale.net>
  */
+var fs = require('fs');
+const fortune = require('fortune')
+const express = require('express');
+const nedbAdapter = require('fortune-nedb')
+const http = require('http')
+const fortuneHTTP = require('fortune-http')
+const microApiSerializer = require('fortune-micro-api')
 
-var fortune = require("fortune");
-var express = fortune.express;
-var partials = require('express-partials');
-var keenio = require('express-keenio');
+const keenio = require('express-keenio');
 
-var config = require('./config');
+const config = require('./config');
 
-var crypto = require('crypto')
-  , key = config.apibunny.privateKey;
-
-var container = express()
-  , port = process.argv[2] || config.apibunny.port;
+const app = express()
+  , port = process.argv[2] || config.escape.port;
 
 //Layout and views
-container.set('views', __dirname + '/views');
-container.engine('html', require('ejs').renderFile);
-container.set('view engine', 'ejs');
-container.use(fortune.express.static(__dirname + '/public'));
-container.use(partials());
+app.use(express.static(__dirname + '/public'));
 
 //Env
 var ENV='';
@@ -33,100 +31,134 @@ keenio.configure({ client: {
     projectId: config.keen.projectId,
     writeKey: config.keen.writeKey,
 } });
-
 keenio.on('error', console.warn);
 
 //Fortune JS resources
-var mazeAPI = fortune({
-  db: "./db/maze-data",
-  baseUrl: config.apibunny.baseUrl
-});
+const db = "./db";
+const mazeAPI = fortune({
+  maze: {
+    name: String,
+    logo: String,
+    cells: [ Array('cell'), 'maze' ],
+    start: 'cell',
+    story: String,
+    instructions: String,
+    sponsor: String,
+    validate: String
+  },
+  cell: {
+    name: String,
+    content: String,
+    readableId: Number,
+    north: 'cell',
+    east: 'cell',
+    south: 'cell',
+    west: 'cell',
+    maze: ['maze', 'cells'],
+  },
+  validate: {
+    code: String
+  }
+},
+{
+  adapter: [ nedbAdapter, {dbPath: db} ]
+}
+)
 
-mazeAPI.resource('maze',{
-	name: String,
-	start: {ref: 'cell',inverse:'null'}
-}).readOnly();
+const options = {
+  entryPoint: config.escape.baseUrl
+}
 
-mazeAPI.resource('cell',{
-	name: String,
-	readableId: Number,
-	north: {ref:'cell', inverse:'null'},
-	east: {ref:'cell', inverse:'null'},
-	south: {ref:'cell', inverse:'null'},
-	west: {ref:'cell', inverse:'null'},
-  abandon: String,
-	exit_link: String,
-	type: String,
-	maze: {ref: 'maze'},
-}).readOnly();
+const listener = fortuneHTTP(mazeAPI, {
+  serializers: [
+    [ microApiSerializer, options ]
+  ]
+})
 
-mazeAPI.resource('user',{
-   twitter_handle: String,
-   date: Date,
-   hash: String,
-   getprize: {ref: 'winning'}
-}).transform(createHash);
-
-//Express routes
-container
-  .get('/cells',keenio.trackRoute('errorCollection'+ENV),function(req,res){
-  	res.send(403, 'Nice try, not allowed');
+app
+  .get('/cell', keenio.trackRoute('errorCollection'+ENV), function (req, res) {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(403, '{"status": 403, "message":"That\'d be far too easy... don\'t you think"}')
   })
-  .get('/users',keenio.trackRoute('errorCollection'+ENV),function(req,res){
-  	res.send(403, 'Nice try, not allowed, tip: POST your twitter_handle');
+  .get('/maze/:id/cells', keenio.trackRoute('errorCollection'+ENV), function (req, res) {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(403, '{"status": 403, "message":"That\'d be far too easy... don\'t you think"}')
   })
-  .delete('/users/:id',keenio.trackRoute('errorCollection'+ENV),function(req,res){
-    res.send(403, 'Dead end, my friend');
-  })
-  .patch('/users/:id',keenio.trackRoute('errorCollection'+ENV),function(req,res){
-    res.send(403, 'Keep trying, but not here');
-  })
-  .post('/users/:anything',keenio.trackRoute('errorCollection'+ENV),function(req,res){
-    res.send(400, 'Wrong direction buddy! That\'s not how your are supposed to do a POST request ;)');
-  })
-  .use(mazeAPI.router)
-  .get('/', keenio.trackRoute('indexCollection'+ENV), function(req, res) {
-    mazeAPI.adapter.awaitConnection().then(function () {
-      maze = mazeAPI.adapter.findMany('maze');
-    return maze;
-  }).then(function (resource) {
+  // override maze endpoints to remove cells array
+  .get('/maze', keenio.trackRoute('indexCollection'+ENV), function (req, res) {
+    res.setHeader('Content-Type', 'application/json');
+    mazeAPI.adapter.connect().then(function () {
+        maze = mazeAPI.adapter.find('maze');
+      return maze;
+    }).then(function (resource) {
       if(resource){
-        res.render('index',{title: 'APIbunny quest', maze_id:resource[0].id, maze_name: resource[0].name, maze_start:resource[0].links.start});
-      }else{
-        res.status(404);
-        res.send("Not found");
+        const mazeJSON = JSON.parse(fs.readFileSync('./data/mazes.json'));
+        mazeJSON.graph[0].href = config.escape.baseUrl + "/maze/" + resource[0].id;
+        mazeJSON.graph[0].id = resource[0]._id;
+        mazeJSON.graph[0].name = resource[0].name;
+        mazeJSON.graph[0].story = resource[0].story;
+        mazeJSON.graph[0].instructions = resource[0].instructions;
+        mazeJSON.graph[0].validate = resource[0].validate;
+        mazeJSON.graph[0].logo = resource[0].logo;
+        mazeJSON.graph[0].start.href = config.escape.baseUrl + "/maze/" + resource[0].id + "/start";
+        mazeJSON.graph[0].start.id = resource[0].start;
+        res.send(mazeJSON, null, 3)
       }
-    });
+    })
   })
-  .get('/abandon',keenio.trackRoute('abandonCollection'+ENV), function(req, res) {
-    res.render('abandon',{title: 'APIbunny abandon'});
+  .get('/maze/:id', keenio.trackRoute('indexCollection'+ENV), function (req, res) {
+    res.setHeader('Content-Type', 'application/json');
+    mazeAPI.adapter.connect().then(function () {
+        maze = mazeAPI.adapter.find('maze');
+      return maze;
+    }).then(function (resource) {
+      if(resource){
+        const mazeJSON = JSON.parse(fs.readFileSync('./data/maze.json'));
+        mazeJSON.href = config.escape.baseUrl + "/maze/" + resource[0].id;
+        mazeJSON.id = resource[0]._id;
+        mazeJSON.name = resource[0].name;
+        mazeJSON.story = resource[0].story;
+        mazeJSON.instructions = resource[0].instructions;
+        mazeJSON.validate = resource[0].validate;
+        mazeJSON.logo = resource[0].logo;
+        mazeJSON.start.href = config.escape.baseUrl + "/maze/" + resource[0].id + "/start";
+        mazeJSON.start.id = resource[0].start;
+        res.send(mazeJSON, null, 3)
+      }
+    })
   })
-  .get('/dashboard',function(req,res){
-    res.render('dashboard',{layout:'basic',title:"Dashboard"});
+  .get('/cell/:id/maze', keenio.trackRoute('indexCollection'+ENV), function (req, res) {
+    res.setHeader('Content-Type', 'application/json');
+    mazeAPI.adapter.connect().then(function () {
+        maze = mazeAPI.adapter.find('maze');
+      return maze;
+    }).then(function (resource) {
+      if(resource){
+        const mazeJSON = JSON.parse(fs.readFileSync('./data/maze.json'));
+        mazeJSON.href = config.escape.baseUrl + "/maze/" + resource[0].id;
+        mazeJSON.id = resource[0]._id;
+        mazeJSON.name = resource[0].name;
+        mazeJSON.story = resource[0].story;
+        mazeJSON.instructions = resource[0].instructions;
+        mazeJSON.validate = resource[0].validate;
+        mazeJSON.logo = resource[0].logo;
+        mazeJSON.start.href = config.escape.baseUrl + "/maze/" + resource[0].id + "/start";
+        mazeJSON.start.id = resource[0].start;
+        res.send(mazeJSON, null, 3)
+      }
+    })
   })
-  .get('/winnings/:hash', keenio.trackRoute('winningCollection'+ENV),function(req, res) {
-    var user;
-  	mazeAPI.adapter.awaitConnection().then(function () {
-  	  user = mazeAPI.adapter.find('user', {hash:req.params['hash']});
-	  return user;
-	}).then(function (resource) {
-  	  if(resource){
-  	  	res.render('winning',{title: 'APIbunny found', username: resource.twitter_handle, url: "http://apibunny.com/winnings/"+resource.hash});
-  	  }else{
-  	  	res.send(404,"Not found");
-  	  }
-	  });
-    
- }).listen(port);
+  .get('/validate/:token', keenio.trackRoute('validationCollection'+ENV), function (req, res) {
+    if (req.params.token.toLowerCase() == config.escape.token.toLowerCase()) {
+      res.setHeader('Content-Type', 'application/json');
+      res.send(fs.readFileSync('./data/valid-token.json'), null, 3)
+    }
+    else {
+      res.setHeader('Content-Type', 'application/json');
+      res.send(fs.readFileSync('./data/invalid-token.json'), null, 3)
+    }
+  })
+
+app.use(listener).listen(port);
 
 console.log('Server running at http://127.0.0.1:'+port);
-
-
-//Generate hash from twitter handle
-function createHash(request) {
-  var resource = this;
-  resource.hash = crypto.createHmac('sha1', key).update(resource.twitter_handle).digest('hex');
-  resource.date = Date.now();
-  resource.getprize = resource.hash;
-  return resource;
-}

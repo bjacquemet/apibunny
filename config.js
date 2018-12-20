@@ -1,13 +1,13 @@
 var config = {}
 config.keen = {};
-config.apibunny = {}
+config.escape = {}
 
 config.keen.projectId = "PROJECT_ID";
 config.keen.writeKey = "WRITE_KEY";
 
-config.apibunny.privateKey = "YOURKEY";
-config.apibunny.host = "localhost";
-config.apibunny.port = 3000;
-config.apibunny.baseUrl = "http://apibunny.com";
+config.escape.privateKey = "YOURKEY";
+config.escape.host = "localhost";
+config.escape.port = 3000;
+config.escape.baseUrl = "http://escape.apidays.co";
 
 module.exports = config;
